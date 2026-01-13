@@ -44,16 +44,18 @@ jobs:
           path: dist/whisper-cpp-darwin-arm64.zip
 
   build-macos-x64:
-    runs-on: macos-13  # Intel runner
+    runs-on: macos-14  # Cross-compile for x64 on arm64 runner
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build whisper.cpp
+      - name: Build whisper.cpp for x64
         run: |
           cmake -B build \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES=x86_64 \
             -DWHISPER_METAL=OFF \
+            -DGGML_METAL=OFF \
             -DBUILD_SHARED_LIBS=OFF
           cmake --build build --config Release -j $(sysctl -n hw.logicalcpu)
 
