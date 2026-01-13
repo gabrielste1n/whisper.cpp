@@ -1,0 +1,179 @@
+name: Build Binaries for OpenWhispr
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_tag:
+        description: 'Version tag for release (e.g., v1.0.0)'
+        required: true
+        type: string
+  push:
+    tags:
+      - 'openwhispr-*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos-arm64:
+    runs-on: macos-14  # M1 runner
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build whisper.cpp
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DWHISPER_METAL=ON \
+            -DGGML_METAL=ON \
+            -DBUILD_SHARED_LIBS=OFF
+          cmake --build build --config Release -j $(sysctl -n hw.logicalcpu)
+
+      - name: Package binary
+        run: |
+          mkdir -p dist
+          cp build/bin/whisper-cli dist/whisper-cpp-darwin-arm64
+          chmod +x dist/whisper-cpp-darwin-arm64
+          cd dist && zip whisper-cpp-darwin-arm64.zip whisper-cpp-darwin-arm64
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-cpp-darwin-arm64
+          path: dist/whisper-cpp-darwin-arm64.zip
+
+  build-macos-x64:
+    runs-on: macos-13  # Intel runner
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build whisper.cpp
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DWHISPER_METAL=OFF \
+            -DBUILD_SHARED_LIBS=OFF
+          cmake --build build --config Release -j $(sysctl -n hw.logicalcpu)
+
+      - name: Package binary
+        run: |
+          mkdir -p dist
+          cp build/bin/whisper-cli dist/whisper-cpp-darwin-x64
+          chmod +x dist/whisper-cpp-darwin-x64
+          cd dist && zip whisper-cpp-darwin-x64.zip whisper-cpp-darwin-x64
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-cpp-darwin-x64
+          path: dist/whisper-cpp-darwin-x64.zip
+
+  build-windows-x64:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Build whisper.cpp
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF
+          cmake --build build --config Release -j $env:NUMBER_OF_PROCESSORS
+
+      - name: Package binary
+        run: |
+          mkdir dist
+          copy build\bin\Release\whisper-cli.exe dist\whisper-cpp-win32-x64.exe
+          cd dist
+          Compress-Archive -Path whisper-cpp-win32-x64.exe -DestinationPath whisper-cpp-win32-x64.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-cpp-win32-x64
+          path: dist/whisper-cpp-win32-x64.zip
+
+  build-linux-x64:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake
+
+      - name: Build whisper.cpp
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DGGML_NATIVE=OFF
+          cmake --build build --config Release -j $(nproc)
+
+      - name: Package binary
+        run: |
+          mkdir -p dist
+          cp build/bin/whisper-cli dist/whisper-cpp-linux-x64
+          chmod +x dist/whisper-cpp-linux-x64
+          cd dist && zip whisper-cpp-linux-x64.zip whisper-cpp-linux-x64
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-cpp-linux-x64
+          path: dist/whisper-cpp-linux-x64.zip
+
+  create-release:
+    needs: [build-macos-arm64, build-macos-x64, build-windows-x64, build-linux-x64]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release files
+        run: |
+          mkdir release
+          mv artifacts/whisper-cpp-darwin-arm64/whisper-cpp-darwin-arm64.zip release/
+          mv artifacts/whisper-cpp-darwin-x64/whisper-cpp-darwin-x64.zip release/
+          mv artifacts/whisper-cpp-win32-x64/whisper-cpp-win32-x64.zip release/
+          mv artifacts/whisper-cpp-linux-x64/whisper-cpp-linux-x64.zip release/
+          ls -la release/
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version_tag }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: OpenWhispr Binaries ${{ steps.version.outputs.version }}
+          body: |
+            Pre-built whisper.cpp binaries for OpenWhispr.
+
+            ## Binaries included:
+            - `whisper-cpp-darwin-arm64.zip` - macOS Apple Silicon (M1/M2/M3)
+            - `whisper-cpp-darwin-x64.zip` - macOS Intel
+            - `whisper-cpp-win32-x64.zip` - Windows x64
+            - `whisper-cpp-linux-x64.zip` - Linux x64
+
+            ## Usage
+            Extract the binary and place it in your PATH or use it directly.
+          files: release/*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
