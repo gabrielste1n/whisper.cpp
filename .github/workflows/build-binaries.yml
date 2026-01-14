@@ -30,18 +30,31 @@ jobs:
             -DBUILD_SHARED_LIBS=OFF
           cmake --build build --config Release -j $(sysctl -n hw.logicalcpu)
 
-      - name: Package binary
+      - name: Package binaries
         run: |
           mkdir -p dist
+          # whisper-cli
           cp build/bin/whisper-cli dist/whisper-cpp-darwin-arm64
           chmod +x dist/whisper-cpp-darwin-arm64
-          cd dist && zip whisper-cpp-darwin-arm64.zip whisper-cpp-darwin-arm64
+          # whisper-server
+          cp build/bin/whisper-server dist/whisper-server-darwin-arm64
+          chmod +x dist/whisper-server-darwin-arm64
+          # Create zips
+          cd dist
+          zip whisper-cpp-darwin-arm64.zip whisper-cpp-darwin-arm64
+          zip whisper-server-darwin-arm64.zip whisper-server-darwin-arm64
 
-      - name: Upload artifact
+      - name: Upload whisper-cli artifact
         uses: actions/upload-artifact@v4
         with:
           name: whisper-cpp-darwin-arm64
           path: dist/whisper-cpp-darwin-arm64.zip
+
+      - name: Upload whisper-server artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-server-darwin-arm64
+          path: dist/whisper-server-darwin-arm64.zip
 
   build-macos-x64:
     runs-on: macos-14  # Cross-compile for x64 on arm64 runner
@@ -60,18 +73,31 @@ jobs:
             -DBUILD_SHARED_LIBS=OFF
           cmake --build build --config Release -j $(sysctl -n hw.logicalcpu)
 
-      - name: Package binary
+      - name: Package binaries
         run: |
           mkdir -p dist
+          # whisper-cli
           cp build/bin/whisper-cli dist/whisper-cpp-darwin-x64
           chmod +x dist/whisper-cpp-darwin-x64
-          cd dist && zip whisper-cpp-darwin-x64.zip whisper-cpp-darwin-x64
+          # whisper-server
+          cp build/bin/whisper-server dist/whisper-server-darwin-x64
+          chmod +x dist/whisper-server-darwin-x64
+          # Create zips
+          cd dist
+          zip whisper-cpp-darwin-x64.zip whisper-cpp-darwin-x64
+          zip whisper-server-darwin-x64.zip whisper-server-darwin-x64
 
-      - name: Upload artifact
+      - name: Upload whisper-cli artifact
         uses: actions/upload-artifact@v4
         with:
           name: whisper-cpp-darwin-x64
           path: dist/whisper-cpp-darwin-x64.zip
+
+      - name: Upload whisper-server artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-server-darwin-x64
+          path: dist/whisper-server-darwin-x64.zip
 
   build-windows-x64:
     runs-on: windows-latest
@@ -87,18 +113,29 @@ jobs:
           cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF
           cmake --build build --config Release -j $env:NUMBER_OF_PROCESSORS
 
-      - name: Package binary
+      - name: Package binaries
         run: |
           mkdir dist
+          # whisper-cli
           copy build\bin\Release\whisper-cli.exe dist\whisper-cpp-win32-x64.exe
+          # whisper-server
+          copy build\bin\Release\whisper-server.exe dist\whisper-server-win32-x64.exe
+          # Create zips
           cd dist
           Compress-Archive -Path whisper-cpp-win32-x64.exe -DestinationPath whisper-cpp-win32-x64.zip
+          Compress-Archive -Path whisper-server-win32-x64.exe -DestinationPath whisper-server-win32-x64.zip
 
-      - name: Upload artifact
+      - name: Upload whisper-cli artifact
         uses: actions/upload-artifact@v4
         with:
           name: whisper-cpp-win32-x64
           path: dist/whisper-cpp-win32-x64.zip
+
+      - name: Upload whisper-server artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-server-win32-x64
+          path: dist/whisper-server-win32-x64.zip
 
   build-linux-x64:
     runs-on: ubuntu-22.04
@@ -119,18 +156,31 @@ jobs:
             -DGGML_NATIVE=OFF
           cmake --build build --config Release -j $(nproc)
 
-      - name: Package binary
+      - name: Package binaries
         run: |
           mkdir -p dist
+          # whisper-cli
           cp build/bin/whisper-cli dist/whisper-cpp-linux-x64
           chmod +x dist/whisper-cpp-linux-x64
-          cd dist && zip whisper-cpp-linux-x64.zip whisper-cpp-linux-x64
+          # whisper-server
+          cp build/bin/whisper-server dist/whisper-server-linux-x64
+          chmod +x dist/whisper-server-linux-x64
+          # Create zips
+          cd dist
+          zip whisper-cpp-linux-x64.zip whisper-cpp-linux-x64
+          zip whisper-server-linux-x64.zip whisper-server-linux-x64
 
-      - name: Upload artifact
+      - name: Upload whisper-cli artifact
         uses: actions/upload-artifact@v4
         with:
           name: whisper-cpp-linux-x64
           path: dist/whisper-cpp-linux-x64.zip
+
+      - name: Upload whisper-server artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-server-linux-x64
+          path: dist/whisper-server-linux-x64.zip
 
   create-release:
     needs: [build-macos-arm64, build-macos-x64, build-windows-x64, build-linux-x64]
@@ -144,10 +194,16 @@ jobs:
       - name: Prepare release files
         run: |
           mkdir release
+          # whisper-cli binaries
           mv artifacts/whisper-cpp-darwin-arm64/whisper-cpp-darwin-arm64.zip release/
           mv artifacts/whisper-cpp-darwin-x64/whisper-cpp-darwin-x64.zip release/
           mv artifacts/whisper-cpp-win32-x64/whisper-cpp-win32-x64.zip release/
           mv artifacts/whisper-cpp-linux-x64/whisper-cpp-linux-x64.zip release/
+          # whisper-server binaries
+          mv artifacts/whisper-server-darwin-arm64/whisper-server-darwin-arm64.zip release/
+          mv artifacts/whisper-server-darwin-x64/whisper-server-darwin-x64.zip release/
+          mv artifacts/whisper-server-win32-x64/whisper-server-win32-x64.zip release/
+          mv artifacts/whisper-server-linux-x64/whisper-server-linux-x64.zip release/
           ls -la release/
 
       - name: Determine version
@@ -167,14 +223,23 @@ jobs:
           body: |
             Pre-built whisper.cpp binaries for OpenWhispr.
 
-            ## Binaries included:
+            ## whisper-cli binaries (transcription command-line tool)
             - `whisper-cpp-darwin-arm64.zip` - macOS Apple Silicon (M1/M2/M3)
             - `whisper-cpp-darwin-x64.zip` - macOS Intel
             - `whisper-cpp-win32-x64.zip` - Windows x64
             - `whisper-cpp-linux-x64.zip` - Linux x64
 
+            ## whisper-server binaries (HTTP server for faster repeated transcriptions)
+            - `whisper-server-darwin-arm64.zip` - macOS Apple Silicon (M1/M2/M3)
+            - `whisper-server-darwin-x64.zip` - macOS Intel
+            - `whisper-server-win32-x64.zip` - Windows x64
+            - `whisper-server-linux-x64.zip` - Linux x64
+
             ## Usage
-            Extract the binary and place it in your PATH or use it directly.
+            Extract the binaries and place them in your PATH or use them directly.
+
+            The whisper-server provides an HTTP API for transcription, which is faster
+            for repeated use as it keeps the model loaded in memory.
           files: release/*
           draft: false
           prerelease: false
