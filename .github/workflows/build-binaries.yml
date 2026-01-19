@@ -165,7 +165,8 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release ^
             -DBUILD_SHARED_LIBS=OFF ^
             -DGGML_CUDA=ON ^
-            -DCMAKE_CUDA_ARCHITECTURES="52;60;61;70;75;80;86;89;90"
+            -DCMAKE_CUDA_ARCHITECTURES="52;60;61;70;75;80;86;89;90" ^
+            -DCMAKE_CUDA_HOST_COMPILER="cl.exe"
           cmake --build build --config Release -j %NUMBER_OF_PROCESSORS%
 
       - name: Package binaries
