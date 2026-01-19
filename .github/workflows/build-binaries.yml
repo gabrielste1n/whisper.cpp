@@ -33,13 +33,10 @@ jobs:
       - name: Package binaries
         run: |
           mkdir -p dist
-          # whisper-cli
           cp build/bin/whisper-cli dist/whisper-cpp-darwin-arm64
           chmod +x dist/whisper-cpp-darwin-arm64
-          # whisper-server
           cp build/bin/whisper-server dist/whisper-server-darwin-arm64
           chmod +x dist/whisper-server-darwin-arm64
-          # Create zips
           cd dist
           zip whisper-cpp-darwin-arm64.zip whisper-cpp-darwin-arm64
           zip whisper-server-darwin-arm64.zip whisper-server-darwin-arm64
@@ -76,13 +73,10 @@ jobs:
       - name: Package binaries
         run: |
           mkdir -p dist
-          # whisper-cli
           cp build/bin/whisper-cli dist/whisper-cpp-darwin-x64
           chmod +x dist/whisper-cpp-darwin-x64
-          # whisper-server
           cp build/bin/whisper-server dist/whisper-server-darwin-x64
           chmod +x dist/whisper-server-darwin-x64
-          # Create zips
           cd dist
           zip whisper-cpp-darwin-x64.zip whisper-cpp-darwin-x64
           zip whisper-server-darwin-x64.zip whisper-server-darwin-x64
@@ -100,27 +94,85 @@ jobs:
           path: dist/whisper-server-darwin-x64.zip
 
   build-windows-x64:
-    runs-on: windows-latest
+    runs-on: windows-2022
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install Ninja
+        run: choco install ninja -y
+
+      - name: Install CUDA Toolkit 12.4.0
+        run: |
+          $CUDA_VERSION = "12.4.0"
+          $CUDA_TOOLKIT_DIR = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v$CUDA_VERSION"
+          $CUDA_DOWNLOAD = "https://developer.download.nvidia.com/compute/cuda/redist"
+
+          # Component versions for CUDA 12.4.0
+          $CUDART_VER   = "12.4.127"
+          $NVCC_VER     = "12.4.131"
+          $NVRTC_VER    = "12.4.127"
+          $CUBLAS_VER   = "12.4.5.8"
+          $NVTX_VER     = "12.4.127"
+          $PROFILER_VER = "12.4.127"
+          $VS_VER       = "12.4.127"
+          $CCCL_VER     = "12.4.127"
+
+          # Create CUDA toolkit directory
+          New-Item -ItemType Directory -Force -Path $CUDA_TOOLKIT_DIR
+
+          # Install unzip
+          choco install unzip -y
+
+          # Download CUDA components from official NVIDIA CDN
+          curl -O "$CUDA_DOWNLOAD/cuda_cudart/windows-x86_64/cuda_cudart-windows-x86_64-${CUDART_VER}-archive.zip"
+          curl -O "$CUDA_DOWNLOAD/cuda_nvcc/windows-x86_64/cuda_nvcc-windows-x86_64-${NVCC_VER}-archive.zip"
+          curl -O "$CUDA_DOWNLOAD/cuda_nvrtc/windows-x86_64/cuda_nvrtc-windows-x86_64-${NVRTC_VER}-archive.zip"
+          curl -O "$CUDA_DOWNLOAD/libcublas/windows-x86_64/libcublas-windows-x86_64-${CUBLAS_VER}-archive.zip"
+          curl -O "$CUDA_DOWNLOAD/cuda_nvtx/windows-x86_64/cuda_nvtx-windows-x86_64-${NVTX_VER}-archive.zip"
+          curl -O "$CUDA_DOWNLOAD/cuda_profiler_api/windows-x86_64/cuda_profiler_api-windows-x86_64-${PROFILER_VER}-archive.zip"
+          curl -O "$CUDA_DOWNLOAD/visual_studio_integration/windows-x86_64/visual_studio_integration-windows-x86_64-${VS_VER}-archive.zip"
+          curl -O "$CUDA_DOWNLOAD/cuda_cccl/windows-x86_64/cuda_cccl-windows-x86_64-${CCCL_VER}-archive.zip"
+
+          # Extract all components
+          unzip -q '*.zip' -d $CUDA_TOOLKIT_DIR
+
+          # Copy extracted files to CUDA toolkit directory
+          xcopy "$CUDA_TOOLKIT_DIR\cuda_cudart-windows-x86_64-${CUDART_VER}-archive\*" "$CUDA_TOOLKIT_DIR" /E /I /H /Y
+          xcopy "$CUDA_TOOLKIT_DIR\cuda_nvcc-windows-x86_64-${NVCC_VER}-archive\*" "$CUDA_TOOLKIT_DIR" /E /I /H /Y
+          xcopy "$CUDA_TOOLKIT_DIR\cuda_nvrtc-windows-x86_64-${NVRTC_VER}-archive\*" "$CUDA_TOOLKIT_DIR" /E /I /H /Y
+          xcopy "$CUDA_TOOLKIT_DIR\libcublas-windows-x86_64-${CUBLAS_VER}-archive\*" "$CUDA_TOOLKIT_DIR" /E /I /H /Y
+          xcopy "$CUDA_TOOLKIT_DIR\cuda_nvtx-windows-x86_64-${NVTX_VER}-archive\*" "$CUDA_TOOLKIT_DIR" /E /I /H /Y
+          xcopy "$CUDA_TOOLKIT_DIR\cuda_profiler_api-windows-x86_64-${PROFILER_VER}-archive\*" "$CUDA_TOOLKIT_DIR" /E /I /H /Y
+          xcopy "$CUDA_TOOLKIT_DIR\cuda_cccl-windows-x86_64-${CCCL_VER}-archive\*" "$CUDA_TOOLKIT_DIR" /E /I /H /Y
+          xcopy "$CUDA_TOOLKIT_DIR\visual_studio_integration-windows-x86_64-${VS_VER}-archive\visual_studio_integration\MSBuildExtensions\*" "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Microsoft\VC\v170\BuildCustomizations" /E /I /H /Y
+
+          # Set environment variables
+          echo "$CUDA_TOOLKIT_DIR\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "CUDA_PATH=$CUDA_TOOLKIT_DIR" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Verify CUDA installation
+        run: nvcc --version
+
       - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1
 
-      - name: Build whisper.cpp
+      - name: Build whisper.cpp with CUDA
+        shell: cmd
         run: |
-          cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF
-          cmake --build build --config Release -j $env:NUMBER_OF_PROCESSORS
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+          cmake -S . -B build -G "Ninja Multi-Config" ^
+            -DCMAKE_BUILD_TYPE=Release ^
+            -DBUILD_SHARED_LIBS=OFF ^
+            -DGGML_CUDA=ON ^
+            -DCMAKE_CUDA_ARCHITECTURES="52;60;61;70;75;80;86;89;90"
+          cmake --build build --config Release -j %NUMBER_OF_PROCESSORS%
 
       - name: Package binaries
         run: |
           mkdir dist
-          # whisper-cli
           copy build\bin\Release\whisper-cli.exe dist\whisper-cpp-win32-x64.exe
-          # whisper-server
           copy build\bin\Release\whisper-server.exe dist\whisper-server-win32-x64.exe
-          # Create zips
           cd dist
           Compress-Archive -Path whisper-cpp-win32-x64.exe -DestinationPath whisper-cpp-win32-x64.zip
           Compress-Archive -Path whisper-server-win32-x64.exe -DestinationPath whisper-server-win32-x64.zip
@@ -146,26 +198,48 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake
+          sudo apt-get install -y build-essential cmake wget
 
-      - name: Build whisper.cpp
+      - name: Install CUDA Toolkit 12.4
         run: |
+          # Download and install CUDA keyring
+          wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb
+          sudo apt-get update
+
+          # Install minimal CUDA toolkit (compiler and libraries only, no driver)
+          sudo apt-get install -y cuda-toolkit-12-4
+
+          # Set environment variables
+          echo "/usr/local/cuda-12.4/bin" >> $GITHUB_PATH
+          echo "CUDA_PATH=/usr/local/cuda-12.4" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=/usr/local/cuda-12.4/lib64:$LD_LIBRARY_PATH" >> $GITHUB_ENV
+
+      - name: Verify CUDA installation
+        run: |
+          export PATH=/usr/local/cuda-12.4/bin:$PATH
+          nvcc --version
+
+      - name: Build whisper.cpp with CUDA
+        run: |
+          export PATH=/usr/local/cuda-12.4/bin:$PATH
+          export CUDA_PATH=/usr/local/cuda-12.4
           cmake -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_SHARED_LIBS=OFF \
-            -DGGML_NATIVE=OFF
+            -DGGML_NATIVE=OFF \
+            -DGGML_CUDA=ON \
+            -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.4/bin/nvcc \
+            -DCMAKE_CUDA_ARCHITECTURES="52;60;61;70;75;80;86;89;90"
           cmake --build build --config Release -j $(nproc)
 
       - name: Package binaries
         run: |
           mkdir -p dist
-          # whisper-cli
           cp build/bin/whisper-cli dist/whisper-cpp-linux-x64
           chmod +x dist/whisper-cpp-linux-x64
-          # whisper-server
           cp build/bin/whisper-server dist/whisper-server-linux-x64
           chmod +x dist/whisper-server-linux-x64
-          # Create zips
           cd dist
           zip whisper-cpp-linux-x64.zip whisper-cpp-linux-x64
           zip whisper-server-linux-x64.zip whisper-server-linux-x64
@@ -194,12 +268,10 @@ jobs:
       - name: Prepare release files
         run: |
           mkdir release
-          # whisper-cli binaries
           mv artifacts/whisper-cpp-darwin-arm64/whisper-cpp-darwin-arm64.zip release/
           mv artifacts/whisper-cpp-darwin-x64/whisper-cpp-darwin-x64.zip release/
           mv artifacts/whisper-cpp-win32-x64/whisper-cpp-win32-x64.zip release/
           mv artifacts/whisper-cpp-linux-x64/whisper-cpp-linux-x64.zip release/
-          # whisper-server binaries
           mv artifacts/whisper-server-darwin-arm64/whisper-server-darwin-arm64.zip release/
           mv artifacts/whisper-server-darwin-x64/whisper-server-darwin-x64.zip release/
           mv artifacts/whisper-server-win32-x64/whisper-server-win32-x64.zip release/
@@ -223,23 +295,30 @@ jobs:
           body: |
             Pre-built whisper.cpp binaries for OpenWhispr.
 
-            ## whisper-cli binaries (transcription command-line tool)
-            - `whisper-cpp-darwin-arm64.zip` - macOS Apple Silicon (M1/M2/M3)
-            - `whisper-cpp-darwin-x64.zip` - macOS Intel
-            - `whisper-cpp-win32-x64.zip` - Windows x64
-            - `whisper-cpp-linux-x64.zip` - Linux x64
+            ## GPU Acceleration
+            - **macOS ARM64**: Metal GPU acceleration (M1/M2/M3/M4)
+            - **Windows x64**: NVIDIA CUDA GPU acceleration (auto-fallback to CPU if no NVIDIA GPU)
+            - **Linux x64**: NVIDIA CUDA GPU acceleration (auto-fallback to CPU if no NVIDIA GPU)
+            - **macOS x64**: CPU only (Intel Macs)
 
-            ## whisper-server binaries (HTTP server for faster repeated transcriptions)
-            - `whisper-server-darwin-arm64.zip` - macOS Apple Silicon (M1/M2/M3)
-            - `whisper-server-darwin-x64.zip` - macOS Intel
-            - `whisper-server-win32-x64.zip` - Windows x64
-            - `whisper-server-linux-x64.zip` - Linux x64
+            ## whisper-cli binaries
+            - `whisper-cpp-darwin-arm64.zip` - macOS Apple Silicon with Metal
+            - `whisper-cpp-darwin-x64.zip` - macOS Intel (CPU only)
+            - `whisper-cpp-win32-x64.zip` - Windows x64 with CUDA
+            - `whisper-cpp-linux-x64.zip` - Linux x64 with CUDA
 
-            ## Usage
-            Extract the binaries and place them in your PATH or use them directly.
+            ## whisper-server binaries
+            - `whisper-server-darwin-arm64.zip` - macOS Apple Silicon with Metal
+            - `whisper-server-darwin-x64.zip` - macOS Intel (CPU only)
+            - `whisper-server-win32-x64.zip` - Windows x64 with CUDA
+            - `whisper-server-linux-x64.zip` - Linux x64 with CUDA
 
-            The whisper-server provides an HTTP API for transcription, which is faster
-            for repeated use as it keeps the model loaded in memory.
+            ## Requirements
+            - **NVIDIA GPU users**: Install latest NVIDIA drivers for GPU acceleration
+            - **Non-NVIDIA users**: No requirements, automatic CPU fallback
+
+            ## Supported NVIDIA GPUs
+            Compute capabilities 5.2+ (GTX 900 series through RTX 40 series)
           files: release/*
           draft: false
           prerelease: false
