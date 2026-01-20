@@ -14,6 +14,9 @@ on:
 permissions:
   contents: write
 
+env:
+  CUDA_ARCHITECTURES: "75;80;86;89"
+
 jobs:
   build-macos-arm64:
     runs-on: macos-14  # M1 runner
@@ -21,10 +24,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1
+        with:
+          key: macos-arm64
+
       - name: Build whisper.cpp
         run: |
           cmake -B build \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DWHISPER_METAL=ON \
             -DGGML_METAL=ON \
             -DBUILD_SHARED_LIBS=OFF
@@ -59,10 +69,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1
+        with:
+          key: macos-x64
+
       - name: Build whisper.cpp for x64
         run: |
           cmake -B build \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DCMAKE_OSX_ARCHITECTURES=x86_64 \
             -DWHISPER_METAL=OFF \
             -DGGML_METAL=OFF \
@@ -96,6 +113,15 @@ jobs:
   build-windows-x64:
     runs-on: windows-2022
     steps:
+      - name: Free up disk space
+        shell: pwsh
+        run: |
+          # Remove unnecessary tools to free up disk space
+          Remove-Item -Recurse -Force "C:\hostedtoolcache\CodeQL" -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force "C:\hostedtoolcache\Java*" -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force "C:\hostedtoolcache\go" -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force "C:\hostedtoolcache\Python" -ErrorAction SilentlyContinue
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -157,15 +183,23 @@ jobs:
       - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1
 
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1
+        with:
+          key: windows-x64-cuda
+          variant: sccache
+
       - name: Build whisper.cpp with CUDA
         shell: cmd
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
           cmake -S . -B build -G "Ninja Multi-Config" ^
             -DCMAKE_BUILD_TYPE=Release ^
+            -DCMAKE_C_COMPILER_LAUNCHER=sccache ^
+            -DCMAKE_CXX_COMPILER_LAUNCHER=sccache ^
             -DBUILD_SHARED_LIBS=OFF ^
             -DGGML_CUDA=ON ^
-            -DCMAKE_CUDA_ARCHITECTURES="52;60;61;70;75;80;86;89;90" ^
+            -DCMAKE_CUDA_ARCHITECTURES="${{ env.CUDA_ARCHITECTURES }}" ^
             -DCMAKE_CUDA_HOST_COMPILER="cl.exe"
           cmake --build build --config Release -j %NUMBER_OF_PROCESSORS%
 
@@ -193,6 +227,15 @@ jobs:
   build-linux-x64:
     runs-on: ubuntu-22.04
     steps:
+      - name: Free up disk space
+        run: |
+          # Remove unnecessary tools to free up disk space for CUDA build
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          df -h
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -221,17 +264,24 @@ jobs:
           export PATH=/usr/local/cuda-12.4/bin:$PATH
           nvcc --version
 
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1
+        with:
+          key: linux-x64-cuda
+
       - name: Build whisper.cpp with CUDA
         run: |
           export PATH=/usr/local/cuda-12.4/bin:$PATH
           export CUDA_PATH=/usr/local/cuda-12.4
           cmake -B build \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DBUILD_SHARED_LIBS=OFF \
             -DGGML_NATIVE=OFF \
             -DGGML_CUDA=ON \
             -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.4/bin/nvcc \
-            -DCMAKE_CUDA_ARCHITECTURES="52;60;61;70;75;80;86;89;90"
+            -DCMAKE_CUDA_ARCHITECTURES="${{ env.CUDA_ARCHITECTURES }}"
           cmake --build build --config Release -j $(nproc)
 
       - name: Package binaries
@@ -319,7 +369,7 @@ jobs:
             - **Non-NVIDIA users**: No requirements, automatic CPU fallback
 
             ## Supported NVIDIA GPUs
-            Compute capabilities 5.2+ (GTX 900 series through RTX 40 series)
+            Compute capabilities 7.5+ (RTX 2000 series through RTX 40 series)
           files: release/*
           draft: false
           prerelease: false
