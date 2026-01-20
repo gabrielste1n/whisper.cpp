@@ -193,7 +193,6 @@ jobs:
         shell: cmd
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
-          set "CUDAHOSTCXX=cl.exe"
           cmake -S . -B build -G "Ninja Multi-Config" ^
             -DCMAKE_BUILD_TYPE=Release ^
             -DCMAKE_C_COMPILER_LAUNCHER=sccache ^
@@ -201,6 +200,7 @@ jobs:
             -DBUILD_SHARED_LIBS=OFF ^
             -DGGML_CUDA=ON ^
             -DCMAKE_CUDA_ARCHITECTURES="${{ env.CUDA_ARCHITECTURES }}" ^
+            -DCMAKE_CUDA_FLAGS="--use-local-env" ^
             -DCMAKE_CUDA_HOST_COMPILER="cl.exe"
           cmake --build build --config Release -j %NUMBER_OF_PROCESSORS%
 
