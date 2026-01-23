@@ -110,7 +110,69 @@ jobs:
           name: whisper-server-darwin-x64
           path: dist/whisper-server-darwin-x64.zip
 
-  build-windows-x64:
+  build-windows-x64-cpu:
+    runs-on: windows-2022
+    steps:
+      - name: Free up disk space
+        shell: pwsh
+        run: |
+          # Remove unnecessary tools to free up disk space
+          Remove-Item -Recurse -Force "C:\hostedtoolcache\CodeQL" -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force "C:\hostedtoolcache\Java*" -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force "C:\hostedtoolcache\go" -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force "C:\hostedtoolcache\Python" -ErrorAction SilentlyContinue
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Ninja
+        run: choco install ninja -y
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1
+        with:
+          key: windows-x64-cpu
+          variant: sccache
+
+      - name: Build whisper.cpp (CPU-only)
+        shell: cmd
+        run: |
+          cmake -S . -B build -G "Ninja Multi-Config" ^
+            -DCMAKE_BUILD_TYPE=Release ^
+            -DCMAKE_C_COMPILER_LAUNCHER=sccache ^
+            -DCMAKE_CXX_COMPILER_LAUNCHER=sccache ^
+            -DBUILD_SHARED_LIBS=OFF ^
+            -DGGML_NATIVE=OFF ^
+            -DGGML_CUDA=OFF ^
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+          cmake --build build --config Release -j %NUMBER_OF_PROCESSORS%
+
+      - name: Package binaries
+        shell: pwsh
+        run: |
+          mkdir dist
+          Copy-Item build\bin\Release\whisper-cli.exe dist\whisper-cpp-win32-x64-cpu.exe
+          Copy-Item build\bin\Release\whisper-server.exe dist\whisper-server-win32-x64-cpu.exe
+          Set-Location dist
+          Compress-Archive -Path whisper-cpp-win32-x64-cpu.exe -DestinationPath whisper-cpp-win32-x64-cpu.zip
+          Compress-Archive -Path whisper-server-win32-x64-cpu.exe -DestinationPath whisper-server-win32-x64-cpu.zip
+
+      - name: Upload whisper-cli artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-cpp-win32-x64-cpu
+          path: dist/whisper-cpp-win32-x64-cpu.zip
+
+      - name: Upload whisper-server artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-server-win32-x64-cpu
+          path: dist/whisper-server-win32-x64-cpu.zip
+
+  build-windows-x64-cuda:
     runs-on: windows-2022
     steps:
       - name: Free up disk space
@@ -192,40 +254,133 @@ jobs:
       - name: Build whisper.cpp with CUDA
         shell: cmd
         run: |
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
           cmake -S . -B build -G "Ninja Multi-Config" ^
             -DCMAKE_BUILD_TYPE=Release ^
             -DCMAKE_C_COMPILER_LAUNCHER=sccache ^
             -DCMAKE_CXX_COMPILER_LAUNCHER=sccache ^
             -DBUILD_SHARED_LIBS=OFF ^
+            -DGGML_NATIVE=OFF ^
             -DGGML_CUDA=ON ^
             -DCMAKE_CUDA_ARCHITECTURES="${{ env.CUDA_ARCHITECTURES }}" ^
             -DCMAKE_CUDA_FLAGS="--use-local-env" ^
-            -DCMAKE_CUDA_HOST_COMPILER="cl.exe"
+            -DCMAKE_CUDA_HOST_COMPILER="cl.exe" ^
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
           cmake --build build --config Release -j %NUMBER_OF_PROCESSORS%
 
-      - name: Package binaries
+      - name: Package binaries with CUDA DLLs
+        shell: pwsh
         run: |
+          $CUDA_PATH = $env:CUDA_PATH
           mkdir dist
-          copy build\bin\Release\whisper-cli.exe dist\whisper-cpp-win32-x64.exe
-          copy build\bin\Release\whisper-server.exe dist\whisper-server-win32-x64.exe
-          cd dist
-          Compress-Archive -Path whisper-cpp-win32-x64.exe -DestinationPath whisper-cpp-win32-x64.zip
-          Compress-Archive -Path whisper-server-win32-x64.exe -DestinationPath whisper-server-win32-x64.zip
+
+          # Copy main binaries
+          Copy-Item build\bin\Release\whisper-cli.exe dist\whisper-cpp-win32-x64-cuda.exe
+          Copy-Item build\bin\Release\whisper-server.exe dist\whisper-server-win32-x64-cuda.exe
+
+          # Required CUDA runtime DLLs for GPU acceleration
+          $cudaDlls = @("cudart64_12.dll", "cublas64_12.dll", "cublasLt64_12.dll")
+          $bundledDlls = @()
+
+          foreach ($dll in $cudaDlls) {
+            $dllPath = Join-Path $CUDA_PATH "bin\$dll"
+            if (Test-Path $dllPath) {
+              Write-Host "Bundling $dll"
+              Copy-Item $dllPath dist\
+              $bundledDlls += $dll
+            } else {
+              Write-Host "Warning: $dll not found at $dllPath"
+            }
+          }
+
+          Write-Host "Contents of dist folder:"
+          Get-ChildItem dist | Format-Table Name, Length
+
+          # Fail if no CUDA DLLs were bundled
+          if ($bundledDlls.Count -eq 0) {
+            Write-Error "No CUDA DLLs were bundled. Build failed."
+            exit 1
+          }
+
+          # Create zip archives with dynamically built file lists
+          Set-Location dist
+          $cliFiles = @("whisper-cpp-win32-x64-cuda.exe") + $bundledDlls
+          $serverFiles = @("whisper-server-win32-x64-cuda.exe") + $bundledDlls
+
+          Compress-Archive -Path $cliFiles -DestinationPath whisper-cpp-win32-x64-cuda.zip
+          Compress-Archive -Path $serverFiles -DestinationPath whisper-server-win32-x64-cuda.zip
 
       - name: Upload whisper-cli artifact
         uses: actions/upload-artifact@v4
         with:
-          name: whisper-cpp-win32-x64
-          path: dist/whisper-cpp-win32-x64.zip
+          name: whisper-cpp-win32-x64-cuda
+          path: dist/whisper-cpp-win32-x64-cuda.zip
 
       - name: Upload whisper-server artifact
         uses: actions/upload-artifact@v4
         with:
-          name: whisper-server-win32-x64
-          path: dist/whisper-server-win32-x64.zip
+          name: whisper-server-win32-x64-cuda
+          path: dist/whisper-server-win32-x64-cuda.zip
 
-  build-linux-x64:
+  build-linux-x64-cpu:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Free up disk space
+        run: |
+          # Remove unnecessary tools to free up disk space for builds
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          df -h
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1
+        with:
+          key: linux-x64-cpu
+
+      - name: Build whisper.cpp (CPU-only)
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DGGML_NATIVE=OFF \
+            -DGGML_CUDA=OFF
+          cmake --build build --config Release -j $(nproc)
+
+      - name: Package binaries
+        run: |
+          mkdir -p dist
+          cp build/bin/whisper-cli dist/whisper-cpp-linux-x64-cpu
+          chmod +x dist/whisper-cpp-linux-x64-cpu
+          cp build/bin/whisper-server dist/whisper-server-linux-x64-cpu
+          chmod +x dist/whisper-server-linux-x64-cpu
+          cd dist
+          zip whisper-cpp-linux-x64-cpu.zip whisper-cpp-linux-x64-cpu
+          zip whisper-server-linux-x64-cpu.zip whisper-server-linux-x64-cpu
+
+      - name: Upload whisper-cli artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-cpp-linux-x64-cpu
+          path: dist/whisper-cpp-linux-x64-cpu.zip
+
+      - name: Upload whisper-server artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-server-linux-x64-cpu
+          path: dist/whisper-server-linux-x64-cpu.zip
+
+  build-linux-x64-cuda:
     runs-on: ubuntu-22.04
     steps:
       - name: Free up disk space
@@ -288,28 +443,28 @@ jobs:
       - name: Package binaries
         run: |
           mkdir -p dist
-          cp build/bin/whisper-cli dist/whisper-cpp-linux-x64
-          chmod +x dist/whisper-cpp-linux-x64
-          cp build/bin/whisper-server dist/whisper-server-linux-x64
-          chmod +x dist/whisper-server-linux-x64
+          cp build/bin/whisper-cli dist/whisper-cpp-linux-x64-cuda
+          chmod +x dist/whisper-cpp-linux-x64-cuda
+          cp build/bin/whisper-server dist/whisper-server-linux-x64-cuda
+          chmod +x dist/whisper-server-linux-x64-cuda
           cd dist
-          zip whisper-cpp-linux-x64.zip whisper-cpp-linux-x64
-          zip whisper-server-linux-x64.zip whisper-server-linux-x64
+          zip whisper-cpp-linux-x64-cuda.zip whisper-cpp-linux-x64-cuda
+          zip whisper-server-linux-x64-cuda.zip whisper-server-linux-x64-cuda
 
       - name: Upload whisper-cli artifact
         uses: actions/upload-artifact@v4
         with:
-          name: whisper-cpp-linux-x64
-          path: dist/whisper-cpp-linux-x64.zip
+          name: whisper-cpp-linux-x64-cuda
+          path: dist/whisper-cpp-linux-x64-cuda.zip
 
       - name: Upload whisper-server artifact
         uses: actions/upload-artifact@v4
         with:
-          name: whisper-server-linux-x64
-          path: dist/whisper-server-linux-x64.zip
+          name: whisper-server-linux-x64-cuda
+          path: dist/whisper-server-linux-x64-cuda.zip
 
   create-release:
-    needs: [build-macos-arm64, build-macos-x64, build-windows-x64, build-linux-x64]
+    needs: [build-macos-arm64, build-macos-x64, build-windows-x64-cpu, build-windows-x64-cuda, build-linux-x64-cpu, build-linux-x64-cuda]
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
@@ -322,12 +477,16 @@ jobs:
           mkdir release
           mv artifacts/whisper-cpp-darwin-arm64/whisper-cpp-darwin-arm64.zip release/
           mv artifacts/whisper-cpp-darwin-x64/whisper-cpp-darwin-x64.zip release/
-          mv artifacts/whisper-cpp-win32-x64/whisper-cpp-win32-x64.zip release/
-          mv artifacts/whisper-cpp-linux-x64/whisper-cpp-linux-x64.zip release/
+          mv artifacts/whisper-cpp-win32-x64-cpu/whisper-cpp-win32-x64-cpu.zip release/
+          mv artifacts/whisper-cpp-win32-x64-cuda/whisper-cpp-win32-x64-cuda.zip release/
+          mv artifacts/whisper-cpp-linux-x64-cpu/whisper-cpp-linux-x64-cpu.zip release/
+          mv artifacts/whisper-cpp-linux-x64-cuda/whisper-cpp-linux-x64-cuda.zip release/
           mv artifacts/whisper-server-darwin-arm64/whisper-server-darwin-arm64.zip release/
           mv artifacts/whisper-server-darwin-x64/whisper-server-darwin-x64.zip release/
-          mv artifacts/whisper-server-win32-x64/whisper-server-win32-x64.zip release/
-          mv artifacts/whisper-server-linux-x64/whisper-server-linux-x64.zip release/
+          mv artifacts/whisper-server-win32-x64-cpu/whisper-server-win32-x64-cpu.zip release/
+          mv artifacts/whisper-server-win32-x64-cuda/whisper-server-win32-x64-cuda.zip release/
+          mv artifacts/whisper-server-linux-x64-cpu/whisper-server-linux-x64-cpu.zip release/
+          mv artifacts/whisper-server-linux-x64-cuda/whisper-server-linux-x64-cuda.zip release/
           ls -la release/
 
       - name: Determine version
@@ -345,29 +504,36 @@ jobs:
           tag_name: ${{ steps.version.outputs.version }}
           name: OpenWhispr Binaries ${{ steps.version.outputs.version }}
           body: |
-            Pre-built whisper.cpp binaries for OpenWhispr.
+            Pre-built whisper.cpp binaries for OpenWhispr. CPU and CUDA variants are included.
 
             ## GPU Acceleration
             - **macOS ARM64**: Metal GPU acceleration (M1/M2/M3/M4)
-            - **Windows x64**: NVIDIA CUDA GPU acceleration (auto-fallback to CPU if no NVIDIA GPU)
-            - **Linux x64**: NVIDIA CUDA GPU acceleration (auto-fallback to CPU if no NVIDIA GPU)
+            - **Windows x64**: NVIDIA CUDA build (bundled DLLs) and CPU build
+            - **Linux x64**: NVIDIA CUDA build (requires system CUDA) and CPU build
             - **macOS x64**: CPU only (Intel Macs)
 
             ## whisper-cli binaries
             - `whisper-cpp-darwin-arm64.zip` - macOS Apple Silicon with Metal
             - `whisper-cpp-darwin-x64.zip` - macOS Intel (CPU only)
-            - `whisper-cpp-win32-x64.zip` - Windows x64 with CUDA
-            - `whisper-cpp-linux-x64.zip` - Linux x64 with CUDA
+            - `whisper-cpp-win32-x64-cpu.zip` - Windows x64 CPU-only
+            - `whisper-cpp-win32-x64-cuda.zip` - Windows x64 with CUDA (includes bundled CUDA DLLs)
+            - `whisper-cpp-linux-x64-cpu.zip` - Linux x64 CPU-only
+            - `whisper-cpp-linux-x64-cuda.zip` - Linux x64 with CUDA
 
             ## whisper-server binaries
             - `whisper-server-darwin-arm64.zip` - macOS Apple Silicon with Metal
             - `whisper-server-darwin-x64.zip` - macOS Intel (CPU only)
-            - `whisper-server-win32-x64.zip` - Windows x64 with CUDA
-            - `whisper-server-linux-x64.zip` - Linux x64 with CUDA
+            - `whisper-server-win32-x64-cpu.zip` - Windows x64 CPU-only
+            - `whisper-server-win32-x64-cuda.zip` - Windows x64 with CUDA (includes bundled CUDA DLLs)
+            - `whisper-server-linux-x64-cpu.zip` - Linux x64 CPU-only
+            - `whisper-server-linux-x64-cuda.zip` - Linux x64 with CUDA
 
             ## Requirements
-            - **NVIDIA GPU users**: Install latest NVIDIA drivers for GPU acceleration
-            - **Non-NVIDIA users**: No requirements, automatic CPU fallback
+            - **Windows CUDA build**: No additional requirements - CUDA DLLs are bundled.
+            - **Windows CPU build**: No requirements.
+            - **Linux CUDA build**: Install latest NVIDIA drivers and CUDA toolkit for GPU acceleration.
+            - **Linux CPU build**: No requirements.
+            - **All other platforms**: No requirements.
 
             ## Supported NVIDIA GPUs
             Compute capabilities 7.5+ (RTX 2000 series through RTX 40 series)
